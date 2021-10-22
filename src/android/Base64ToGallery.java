@@ -2,7 +2,9 @@ package it.nexxa.base64ToGallery;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.util.Calendar;
+import java.util.Objects;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -10,12 +12,15 @@ import org.apache.cordova.CordovaPlugin;
 import org.json.JSONArray;
 import org.json.JSONException;
 
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
 
@@ -56,7 +61,7 @@ public class Base64ToGallery extends CordovaPlugin {
     } else {
 
       // Save the image
-      File imageFile = savePhoto(bmp, filePrefix);
+      String imageFile = savePhoto(bmp, filePrefix);
 
       if (imageFile == null) {
         callbackContext.error("Error while saving image");
@@ -67,17 +72,16 @@ public class Base64ToGallery extends CordovaPlugin {
         scanPhoto(imageFile);
       }
 
-      callbackContext.success(imageFile.toString());
+      callbackContext.success(imageFile);
     }
 
     return true;
   }
 
-  private File savePhoto(Bitmap bmp, String prefix) {
-    File retVal = null;
+  private String savePhoto(Bitmap bmp, String prefix) {
+    String retVal = null;
 
     try {
-      String deviceVersion = Build.VERSION.RELEASE;
       Calendar c           = Calendar.getInstance();
       String date          = EMPTY_STR
                               + c.get(Calendar.YEAR)
@@ -86,36 +90,25 @@ public class Base64ToGallery extends CordovaPlugin {
                               + c.get(Calendar.HOUR_OF_DAY)
                               + c.get(Calendar.MINUTE)
                               + c.get(Calendar.SECOND);
-
-      int check = deviceVersion.compareTo("2.3.3");
-
-      File folder;
-
-      /*
-       * File path = Environment.getExternalStoragePublicDirectory(
-       * Environment.DIRECTORY_PICTURES ); //this throws error in Android
-       * 2.2
-       */
-      if (check >= 1) {
-        folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
-
-        if (!folder.exists()) {
-          folder.mkdirs();
-        }
-
+      String name = prefix + date + ".png";
+      OutputStream fos;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        ContentResolver resolver = cordova.getContext().getContentResolver();
+        ContentValues contentValues = new ContentValues();
+        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name + ".jpg");
+        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpg");
+        contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
+        Uri imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues);
+        fos = resolver.openOutputStream(Objects.requireNonNull(imageUri));
+        retVal = imageUri.toString();
       } else {
-        folder = Environment.getExternalStorageDirectory();
+        String imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString();
+        File image = new File(imagesDir, name + ".jpg");
+        fos = new FileOutputStream(image);
+        retVal = image.getAbsolutePath();
       }
-
-      File imageFile = new File(folder, prefix + date + ".png");
-
-      FileOutputStream out = new FileOutputStream(imageFile);
-      bmp.compress(Bitmap.CompressFormat.PNG, 100, out);
-      out.flush();
-      out.close();
-
-      retVal = imageFile;
-
+      bmp.compress(Bitmap.CompressFormat.JPEG, 100, fos);
+      Objects.requireNonNull(fos).close();
     } catch (Exception e) {
       Log.e("Base64ToGallery", "An exception occured while saving image: " + e.toString());
     }
@@ -127,9 +120,9 @@ public class Base64ToGallery extends CordovaPlugin {
    * Invoke the system's media scanner to add your photo to the Media Provider's database,
    * making it available in the Android Gallery application and to other apps.
    */
-  private void scanPhoto(File imageFile) {
+  private void scanPhoto(String imageUri) {
     Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-    Uri contentUri         = Uri.fromFile(imageFile);
+    Uri contentUri         = Uri.parse(imageUri);
 
     mediaScanIntent.setData(contentUri);
 
